@@ -1,0 +1,63 @@
+package com.moulberry.axiom.packet.impl;
+
+import com.moulberry.axiom.AxiomPaper;
+import com.moulberry.axiom.annotations.AnnotationUpdateAction;
+import com.moulberry.axiom.annotations.ServerAnnotations;
+import com.moulberry.axiom.packet.PacketHandler;
+import com.moulberry.axiom.restrictions.AxiomPermission;
+import net.minecraft.network.FriendlyByteBuf;
+import net.minecraft.network.RegistryFriendlyByteBuf;
+import net.minecraft.server.level.ServerPlayer;
+import org.bukkit.craftbukkit.entity.CraftPlayer;
+import org.bukkit.entity.Player;
+import org.bukkit.Bukkit;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.logging.Level;
+
+public class UpdateAnnotationPacketListener implements PacketHandler {
+
+    private final AxiomPaper plugin;
+    public UpdateAnnotationPacketListener(AxiomPaper plugin) {
+        this.plugin = plugin;
+    }
+
+    public void onReceive(Player player, RegistryFriendlyByteBuf friendlyByteBuf) {
+        if (!this.plugin.allowAnnotations || !this.plugin.canUseAxiom(player, AxiomPermission.ANNOTATION_CREATE)) {
+            friendlyByteBuf.writerIndex(friendlyByteBuf.readerIndex());
+            return;
+        }
+
+        if (!this.plugin.canModifyWorld(player, player.getWorld())) {
+            return;
+        }
+
+        ServerPlayer serverPlayer = ((CraftPlayer)player).getHandle();
+
+        // Read actions
+        int length = friendlyByteBuf.readVarInt();
+        List<AnnotationUpdateAction> actions = new ArrayList<>(Math.min(256, length));
+        for (int i = 0; i < length; i++) {
+            AnnotationUpdateAction action = AnnotationUpdateAction.read(friendlyByteBuf);
+            if (action != null) {
+                actions.add(action);
+            }
+        }
+
+        // Execute
+        Bukkit.getGlobalRegionScheduler().execute(this.plugin, () -> {
+            try {
+                ServerAnnotations.handleUpdates(serverPlayer.level().getWorld(), actions);
+            } catch (Throwable t) {
+                this.plugin.getLogger().log(Level.SEVERE,
+                    "An error occurred while updating annotations for player " +
+                        serverPlayer.getBukkitEntity().getName() + " (" + serverPlayer.getUUID() + ")",
+                    t);
+                serverPlayer.getBukkitEntity().kick(net.kyori.adventure.text.Component.text(
+                        "An error occured while updating annotations: " + t));
+            }
+        });
+    }
+
+}
